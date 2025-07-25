@@ -241,14 +241,37 @@ public:
         ft.submit();  
     }
 
+    
+    void clone(const string &project_name) {
+        if(project_name.empty()) {
+            cerr << "Please specify a project name to clone\n";
+            return;
+        }
+
+        FileTransfer ft;
+        if(ft.clone_project(project_name) == 0) {
+            if(fs::exists(project_name + "/.vcp")) {
+                cout << "Project '" << project_name << "' cloned successfully!\n";
+                cout << "Navigate to the project directory with: cd " << project_name << endl;
+            }
+        }
+    }
+
+    
+    void list() {
+        FileTransfer ft;
+        ft.list_projects();
+    }
+
     void help() {
         cout << "VCP - Version Control Program\n";
         cout << "Commands:\n"
              << "  init     - Start new project\n"
              << "  state    - Show changes\n"
              << "  add      - Track files\n"
-             << "  submit   - Send to server\n";
-            //  << "  clone    - Get from server \n";
+             << "  submit   - Send to server\n"
+             << "  clone    - Clone project from server\n"
+             << "  list     - List available projects on server\n";
     }
 };
 
@@ -281,9 +304,16 @@ int main(int argc, char *argv[]) {
     else if(cmd == "submit") {
         vcp.submit();
     }
-    // else if(cmd == "clone") {
-    //     
-    // }
+    else if(cmd == "clone") {
+        if(argc < 3) {
+            cerr << "Missing project name to clone!\n";
+            return 1;
+        }
+        vcp.clone(argv[2]);
+    }
+    else if(cmd == "list") {
+        vcp.list();
+    }
     else {
         cerr << "Unknown command '" << cmd << "'\n";
         vcp.help();

@@ -13,6 +13,11 @@ namespace fs = std::filesystem;
 #define SERVER_PORT 8080
 #define BUFFER_SIZE 1024
 
+// Declarition of functions
+bool handle_submit_request(int client_sock);
+bool handle_clone_request(int client_sock);
+bool handle_list_request(int client_sock);
+
 // Helper to receive exactly n bytes
 bool recv_all(int sock, char *buffer, size_t len) {
     size_t total = 0;
@@ -46,17 +51,7 @@ bool send_ack(int sock, uint32_t ack_val) {
     return true;
 }
 
-// // Since htonll and ntohll are not standard, define them here:
-// #if defined(__APPLE__) || defined(__MACH__) || defined(__linux__)
-// static inline uint64_t htonll(uint64_t value) {
-//     // Use htonl on lower and upper 32 bits.
-//     return ((uint64_t)htonl(value & 0xFFFFFFFF) << 32) | htonl(value >> 32);
-// }
-
-// static inline uint64_t ntohll(uint64_t value) {
-//     return ((uint64_t)ntohl(value & 0xFFFFFFFF) << 32) | ntohl(value >> 32);
-// }
-// #endif
+// htonll and ntohll are available on macOS
 
 // Helper to receive a file sent by client
 bool receive_file(int sock, const string &save_path) {
@@ -80,6 +75,134 @@ bool receive_file(int sock, const string &save_path) {
         remaining -= r;
     }
     outfile.close();
+    return true;
+}
+
+bool send_file_to_client(int sock, const string &file_path) {
+    ifstream file(file_path, ios::binary | ios::ate);
+    if(!file) {
+        cerr << "Cannot open file for sending: " << file_path << endl;
+        return false;
+    }
+
+    uint64_t file_size = file.tellg();
+    file.seekg(0);
+
+    // Send file size
+    uint64_t net_size = htonll(file_size);
+    if(send(sock, &net_size, sizeof(net_size), 0) != sizeof(net_size)) {
+        return false;
+    }
+
+    // Send file content
+    char buffer[BUFFER_SIZE];
+    while(file_size > 0) {
+        size_t read_size = (file_size < BUFFER_SIZE) ? file_size : BUFFER_SIZE;
+        file.read(buffer, read_size);
+        if(send(sock, buffer, read_size, 0) != (ssize_t)read_size) {
+            return false;
+        }
+        file_size -= read_size;
+    }
+
+    return true;
+}
+
+
+bool send_string_to_client(int sock, const string &str) {
+    uint32_t len = htonl(str.size());
+    if(send(sock, &len, sizeof(len), 0) != sizeof(len)) {
+        return false;
+    }
+    if(str.size() > 0) {
+        if(send(sock, str.c_str(), str.size(), 0) != (ssize_t)str.size()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Clone project from server
+bool handle_clone_request(int client_sock) {
+    string project_name;
+    if(!receive_data(client_sock, project_name)) {
+        cerr << "Failed to receive project name for clone\n";
+        return false;
+    }
+
+    cout << "Clone request for project: " << project_name << endl;
+
+    // Check if project exists
+    if(!fs::exists(project_name) || !fs::is_directory(project_name)) {
+        cerr << "Project '" << project_name << "' not found\n";
+        send_ack(client_sock, 0); // Send failure
+        return false;
+    }
+    // Send ack for project name
+    if(!send_ack(client_sock, 1)) {
+        cerr << "Failed to send clone ack\n";
+        return false;
+    }
+
+    // Send Recursive directory contents
+    try {
+        for(const auto& entry : fs::recursive_directory_iterator(project_name)) {
+            if(fs::is_regular_file(entry)) {
+                string rel_path = fs::relative(entry.path(), project_name).string();
+                cout << "Sending file: " << rel_path << endl;
+                
+                if(!send_string_to_client(client_sock, rel_path)) {
+                    cerr << "Failed to send filename: " << rel_path << endl;
+                    return false;
+                }
+                
+                if(!send_file_to_client(client_sock, entry.path().string())) {
+                    cerr << "Failed to send file: " << rel_path << endl;
+                    return false;
+                }
+            }
+        }
+    } catch(const fs::filesystem_error& e) {
+        cerr << "Error accessing project files: " << e.what() << endl;
+        return false;
+    }
+
+    uint32_t end_marker = htonl(0);
+    if(send(client_sock, &end_marker, sizeof(end_marker), 0) != sizeof(end_marker)) {
+        cerr << "Failed to send end marker\n";
+        return false;
+    }
+
+    cout << "Clone completed for project: " << project_name << endl;
+    return true;
+}
+
+bool handle_list_request(int client_sock) {
+    cout << "List request received\n";
+    try {
+        for(const auto& entry : fs::directory_iterator(".")) {
+            if(fs::is_directory(entry) && entry.path().filename().string()[0] != '.') {
+                string project_name = entry.path().filename().string();
+                cout << "Sending project: " << project_name << endl;
+                
+                if(!send_string_to_client(client_sock, project_name)) {
+                    cerr << "Failed to send project name: " << project_name << endl;
+                    return false;
+                }
+            }
+        }
+    } catch(const fs::filesystem_error& e) {
+        cerr << "Error listing projects: " << e.what() << endl;
+        return false;
+    }
+
+    uint32_t end_marker = htonl(0);
+    if(send(client_sock, &end_marker, sizeof(end_marker), 0) != sizeof(end_marker)) {
+        cerr << "Failed to send end marker\n";
+        return false;
+    }
+
+    cout << "Project list sent successfully\n";
     return true;
 }
 
@@ -125,30 +248,53 @@ int main() {
     }
     cout << "Client connected.\n";
 
-    // Step 1: Receive project name and create folder
-    string project_name;
-    if (!receive_data(client_sock, project_name)) {
-        cerr << "Failed to receive project name.\n";
+    string command;
+    if (!receive_data(client_sock, command)) {
+        cerr << "Failed to receive command.\n";
         close(client_sock);
         close(server_sock);
         return 1;
+    }
+    cout << "Received command: " << command << "\n";
+
+    if (command == "SUBMIT") {
+        handle_submit_request(client_sock);
+    }
+    else if (command == "CLONE") {
+        handle_clone_request(client_sock);
+    }
+    else if (command == "LIST") {
+        handle_list_request(client_sock);
+    }
+    else {
+        cerr << "Unknown command: " << command << "\n";
+        send_ack(client_sock, 0); 
+    }
+
+    close(client_sock);
+    close(server_sock);
+    cout << "Connection closed.\n";
+    return 0;
+}
+
+bool handle_submit_request(int client_sock) {
+    string project_name;
+    if (!receive_data(client_sock, project_name)) {
+        cerr << "Failed to receive project name.\n";
+        return false;
     }
     cout << "Received project name: " << project_name << "\n";
 
     if (!fs::exists(project_name)) {
         if (!fs::create_directory(project_name)) {
             cerr << "Failed to create directory: " << project_name << "\n";
-            close(client_sock);
-            close(server_sock);
-            return 1;
+            return false;
         }
     }
     // Send ack for project name
     if (!send_ack(client_sock, 1)) {
         cerr << "Failed to send ack for project name.\n";
-        close(client_sock);
-        close(server_sock);
-        return 1;
+        return false;
     }
 
     // Step 2: Receive files until an empty filename is received.
@@ -182,8 +328,5 @@ int main() {
     if (!send_ack(client_sock, 1))
         cerr << "Failed to send final ack.\n";
 
-    close(client_sock);
-    close(server_sock);
-    cout << "Connection closed.\n";
-    return 0;
+    return true;
 }

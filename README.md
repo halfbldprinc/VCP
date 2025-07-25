@@ -9,6 +9,8 @@ A simple version control system that mimics Git. This project allows users to ma
 - **Initialize Repository**: Set up a new repository to start tracking files and changes.
 - **Add Files**: Add files to the repository to begin tracking their changes.
 - **Submit to Server**: Upload committed files to a remote server for secure storage and backup.
+- **Clone from Server**: Download and recreate projects from the remote server.
+- **List Projects**: View all available projects stored on the server.
 
 ## Prerequisites
 
@@ -29,7 +31,7 @@ Before using the system, ensure that you have the following installed:
 2. Build the project (C++ example):
    ```bash
    g++ VCP.cpp FTP.cpp -o vcp -std=c++17 -I/opt/homebrew/opt/openssl@3/include -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto
-   g++ VCPserver.cpp -o server -std=c++17
+   g++ Server/VCPserver.cpp -o vcpserver -std=c++17
    ```
 
 ## Usage
@@ -63,27 +65,56 @@ To upload your changes to a remote server (e.g., Firebase or Google Cloud), run:
 ```
 This will push the tracked files to your configured cloud storage or local server.
 
+### 5. List Available Projects on Server
+To see all projects available on the server, run:
+```bash
+./vcp list
+```
+This will display a list of all projects stored on the remote server.
+
+### 6. Clone a Project from Server
+To download and recreate a project from the server, run:
+```bash
+./vcp clone <project_name>
+```
+This will download all files from the specified project and create a local copy.
+
 ## Example Workflow
 
-1. Initialize the repository:
+1. Start the server (in a separate terminal):
+   ```bash
+   ./vcpserver
+   ```
+
+2. Initialize the repository:
    ```bash
    ./vcp init
    my_project
    ```
 
-2. Check the state of the repository:
+3. Check the state of the repository:
    ```bash
    ./vcp state
    ```
 
-3. Add a file:
+4. Add a file:
    ```bash
    ./vcp add main.cpp
    ```
 
-4. Submit changes to the server:
+5. Submit changes to the server:
    ```bash
    ./vcp submit
+   ```
+
+6. List projects on server:
+   ```bash
+   ./vcp list
+   ```
+
+7. Clone a project from server:
+   ```bash
+   ./vcp clone my_project_20250725_1234
    ```
 
 ## Contributing
