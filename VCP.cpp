@@ -7,6 +7,7 @@
 #include <sstream>
 #include <chrono>
 #include <iomanip>
+#include <openssl/sha.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -23,20 +24,29 @@ string cpath, vcpPath;
 
 class VCP {
 private:
-    // Generate file fingerprint 
-    // ** TODO use a better algo
+    //using SHA-256 (OpenSSL)
     string hashFile(const string &fpath) {
         ifstream file(fpath, ios::binary);
-        if (!file) { 
-            cerr << "Can't read " << fpath << " (permissions? missing?)" << endl; 
-            return ""; 
+        if (!file) {
+            cerr << "Can't read " << fpath << " (permissions? missing?)" << endl;
+            return "";
         }
-        
-        // Read whole file - might get stuck on big files
-        string content((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
-        size_t fhash = hash<string>{}(content);
-        stringstream hs; 
-        hs << hex << fhash;
+
+        SHA256_CTX ctx;
+        SHA256_Init(&ctx);
+        char buf[8192];
+        while (file.good()) {
+            file.read(buf, sizeof(buf));
+            std::streamsize n = file.gcount();
+            if (n > 0)
+                SHA256_Update(&ctx, buf, n);
+        }
+        unsigned char hash[SHA256_DIGEST_LENGTH];
+        SHA256_Final(hash, &ctx);
+
+        stringstream hs;
+        for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i)
+            hs << hex << setw(2) << setfill('0') << (int)hash[i];
         return hs.str();
     }
 
