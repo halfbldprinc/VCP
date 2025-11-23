@@ -28,6 +28,7 @@ void log_event(const std::string& msg) {
 #include <arpa/inet.h>
 #include <thread>
 #include <atomic>
+#include <regex>
 #define MAX_CLIENTS 8
 
 
@@ -164,6 +165,14 @@ bool handle_clone_request(int client_sock) {
     }
 
     cout << "Clone request for project: " << project_name << endl;
+
+    // Validate project name
+    std::regex valid_name("^[A-Za-z0-9._-]{1,100}$");
+    if (!std::regex_match(project_name, valid_name)) {
+        cerr << "Invalid project name for clone: " << project_name << endl;
+        send_ack(client_sock, 0);
+        return false;
+    }
 
     // Check if project exists
     if(!fs::exists(project_name) || !fs::is_directory(project_name)) {
@@ -368,6 +377,14 @@ bool handle_submit_request(int client_sock) {
         return false;
     }
     cout << "Received project name: " << project_name << "\n";
+
+    // Validate project name: allow letters, numbers, dot, underscore, hyphen; length 1-100
+    std::regex valid_name("^[A-Za-z0-9._-]{1,100}$");
+    if (!std::regex_match(project_name, valid_name)) {
+        cerr << "Invalid project name received: " << project_name << "\n";
+        send_ack(client_sock, 0);
+        return false;
+    }
 
     if (!fs::exists(project_name)) {
         if (!fs::create_directory(project_name)) {
