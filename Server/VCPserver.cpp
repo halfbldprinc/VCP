@@ -35,11 +35,10 @@ bool receive_data(int sock, string &data) {
     if (!recv_all(sock, reinterpret_cast<char*>(&net_len), sizeof(net_len))) return false;
     uint32_t len = ntohl(net_len);
     if (len == 0) { data = ""; return true; }
-    char *buffer = new char[len + 1];
-    if (!recv_all(sock, buffer, len)) { delete[] buffer; return false; }
+    std::vector<char> buffer(len + 1);
+    if (!recv_all(sock, buffer.data(), len)) { return false; }
     buffer[len] = '\0';
-    data = buffer;
-    delete[] buffer;
+    data = buffer.data();
     return true;
 }
 

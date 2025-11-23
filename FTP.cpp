@@ -272,15 +272,13 @@ public:
             if(len == 0) break; 
             
             
-            char* buffer = new char[len + 1];
-            if(!recv_all(sock, buffer, len)) {
-                delete[] buffer;
+            std::vector<char> buffer(len + 1);
+            if(!recv_all(sock, buffer.data(), len)) {
                 cerr << "Failed to receive filename\n";
                 break;
             }
             buffer[len] = '\0';
-            filename = buffer;
-            delete[] buffer;
+            filename = buffer.data();
             
             
             string local_path = project_name + "/" + filename;
@@ -339,14 +337,12 @@ public:
             len = ntohl(len);
             if(len == 0) break; 
             
-            char* buffer = new char[len + 1];
-            if(!recv_all(sock, buffer, len)) {
-                delete[] buffer;
+            std::vector<char> buffer(len + 1);
+            if(!recv_all(sock, buffer.data(), len)) {
                 break;
             }
             buffer[len] = '\0';
-            project_name = buffer;
-            delete[] buffer;
+            project_name = buffer.data();
             
             cout << "  - " << project_name << endl;
         }
