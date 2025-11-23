@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <filesystem>
+#include <regex>
 using namespace std;
 namespace fs = std::filesystem;
 
@@ -140,6 +141,13 @@ public:
 
         string project_name;
         getline(tracker, project_name);
+        // Validate project name before sending
+        std::regex valid_name("^[A-Za-z0-9._-]{1,100}$");
+        if (!std::regex_match(project_name, valid_name)) {
+            cerr << "Invalid project name in tracker: " << project_name << "\n";
+            close(sock);
+            return 1;
+        }
         if(project_name.empty()) {
             cerr << "Tracker file corrupted - missing project name\n";
             close(sock);
@@ -208,6 +216,13 @@ public:
     }
 
     int clone_project(const string &project_name) {
+        // Validate project name before attempting clone
+        std::regex valid_name("^[A-Za-z0-9._-]{1,100}$");
+        if (!std::regex_match(project_name, valid_name)) {
+            cerr << "Invalid project name for clone: " << project_name << endl;
+            return 1;
+        }
+
         int sock = socket(AF_INET, SOCK_STREAM, 0);
         if(sock < 0) {
             cerr << "Socket creation failed\n";
