@@ -1,3 +1,14 @@
+#include <mutex>
+#include <fstream>
+#std::mutex log_mutex;
+
+void log_event(const std::string& msg) {
+    std::lock_guard<std::mutex> lock(log_mutex);
+    std::ofstream log("server.log", std::ios::app);
+    if (log) {
+        log << msg << std::endl;
+    }
+}
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -246,15 +257,21 @@ int main() {
     std::atomic<int> client_count{0};
     auto client_handler = [&](int client_sock) {
         client_count++;
-        cout << "Client connected. Active clients: " << client_count << "\n";
+        std::string connect_msg = "Client connected. Active clients: " + std::to_string(client_count);
+        cout << connect_msg << "\n";
+        log_event(connect_msg);
         string command;
         if (!receive_data(client_sock, command)) {
-            cerr << "Failed to receive command.\n";
+            std::string err_msg = "Failed to receive command.";
+            cerr << err_msg << "\n";
+            log_event(err_msg);
             close(client_sock);
             client_count--;
             return;
         }
-        cout << "Received command: " << command << "\n";
+        std::string cmd_msg = "Received command: " + command;
+        cout << cmd_msg << "\n";
+        log_event(cmd_msg);
         if (command == "SUBMIT") {
             handle_submit_request(client_sock);
         } else if (command == "CLONE") {
@@ -262,11 +279,15 @@ int main() {
         } else if (command == "LIST") {
             handle_list_request(client_sock);
         } else {
-            cerr << "Unknown command: " << command << "\n";
+            std::string unknown_msg = "Unknown command: " + command;
+            cerr << unknown_msg << "\n";
+            log_event(unknown_msg);
             send_ack(client_sock, 0);
         }
         close(client_sock);
-        cout << "Connection closed. Active clients: " << (client_count - 1) << "\n";
+        std::string disconnect_msg = "Connection closed. Active clients: " + std::to_string(client_count - 1);
+        cout << disconnect_msg << "\n";
+        log_event(disconnect_msg);
         client_count--;
     };
 
