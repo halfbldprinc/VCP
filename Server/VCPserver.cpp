@@ -6,6 +6,10 @@
 #include <unistd.h>
 #include <filesystem>
 #include <arpa/inet.h>
+#include <thread>
+#include <atomic>
+#define MAX_CLIENTS 8
+
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -239,38 +243,44 @@ int main() {
 
     cout << "Server listening on port " << SERVER_PORT << "...\n";
 
+    std::atomic<int> client_count{0};
+    auto client_handler = [&](int client_sock) {
+        client_count++;
+        cout << "Client connected. Active clients: " << client_count << "\n";
+        string command;
+        if (!receive_data(client_sock, command)) {
+            cerr << "Failed to receive command.\n";
+            close(client_sock);
+            client_count--;
+            return;
+        }
+        cout << "Received command: " << command << "\n";
+        if (command == "SUBMIT") {
+            handle_submit_request(client_sock);
+        } else if (command == "CLONE") {
+            handle_clone_request(client_sock);
+        } else if (command == "LIST") {
+            handle_list_request(client_sock);
+        } else {
+            cerr << "Unknown command: " << command << "\n";
+            send_ack(client_sock, 0);
+        }
+        close(client_sock);
+        cout << "Connection closed. Active clients: " << (client_count - 1) << "\n";
+        client_count--;
+    };
+
     while (true) {
+        if (client_count >= MAX_CLIENTS) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
         int client_sock = accept(server_sock, nullptr, nullptr);
         if (client_sock < 0) {
             cerr << "Failed to accept client connection.\n";
             break;
         }
-        cout << "Client connected.\n";
-
-        string command;
-        if (!receive_data(client_sock, command)) {
-            cerr << "Failed to receive command.\n";
-            close(client_sock);
-            continue;
-        }
-        cout << "Received command: " << command << "\n";
-
-        if (command == "SUBMIT") {
-            handle_submit_request(client_sock);
-        }
-        else if (command == "CLONE") {
-            handle_clone_request(client_sock);
-        }
-        else if (command == "LIST") {
-            handle_list_request(client_sock);
-        }
-        else {
-            cerr << "Unknown command: " << command << "\n";
-            send_ack(client_sock, 0);
-        }
-
-        close(client_sock);
-        cout << "Connection closed.\n";
+        std::thread(client_handler, client_sock).detach();
     }
     close(server_sock);
     return 0;
