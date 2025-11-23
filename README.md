@@ -1,24 +1,14 @@
-
-
 # Version Control Project (VCP) - A Git Mimic
 
 A simple version control system that mimics Git. This project allows users to manage and track changes in their files and projects with features such as repository initialization, adding files, and submitting them to a remote server.
 
-## Features
+## Features (Sample)
 
-- **Initialize Repository**: Set up a new repository to start tracking files and changes.
-- **Add Files**: Add files to the repository to begin tracking their changes.
-- **Submit to Server**: Upload committed files to a remote server for secure storage and backup.
-- **Clone from Server**: Download and recreate projects from the remote server.
-- **List Projects**: View all available projects stored on the server.
-
-## Prerequisites
-
-Before using the system, ensure that you have the following installed:
-
-- **C++ Compiler** (with support for C++17 or higher).
-- **Storage Service** Server for file submission, or you can use local storage for testing (server side codes included).
-  
+- Initialize a new repository
+- Add files for tracking
+- Submit changes to a remote server
+- Clone projects from the server
+- List available projects
 
 ## Installation
 
@@ -28,10 +18,45 @@ Before using the system, ensure that you have the following installed:
    cd VCP
    ```
 
-2. Build the project (C++ example):
+2. Build the project (C++17 or higher required):
+   ```bash
+   g++ VCP.cpp FTP.cpp -o vcp -std=c++17 $(pkg-config --cflags --libs openssl)
+   g++ Server/VCPserver.cpp -o vcpserver -std=c++17
+   ```
+   
+   If `pkg-config` is not available, you may need to specify OpenSSL include and library paths manually. For example, on macOS with Homebrew:
+   ```bash
+   g++ VCP.cpp FTP.cpp -o vcp -std=c++17 -I/opt/homebrew/opt/openssl@3/include -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto
+   ```
+   On Linux, you may use:
+   ```bash
+   g++ VCP.cpp FTP.cpp -o vcp -std=c++17 -lssl -lcrypto
+    ```
+
+### manual build
+
+#### On macOS (with Homebrew):
+1. Install OpenSSL:
+   ```bash
+   brew install openssl@3
+   ```
+2. Build the project:
    ```bash
    g++ VCP.cpp FTP.cpp -o vcp -std=c++17 -I/opt/homebrew/opt/openssl@3/include -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto
    g++ Server/VCPserver.cpp -o vcpserver -std=c++17
+   ```
+
+#### On Linux (Debian/Ubuntu):
+1. Install OpenSSL development libraries:
+   ```bash
+   sudo apt-get update
+   sudo apt-get install libssl-dev
+   ```
+2. Build the project:
+   ```bash
+   g++ VCP.cpp FTP.cpp -o vcp -std=c++17 -lssl -lcrypto
+   g++ Server/VCPserver.cpp -o vcpserver -std=c++17
+   ```
    ```
 
 ## Usage
