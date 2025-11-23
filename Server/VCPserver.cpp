@@ -239,40 +239,40 @@ int main() {
 
     cout << "Server listening on port " << SERVER_PORT << "...\n";
 
-    int client_sock = accept(server_sock, nullptr, nullptr);
-    if (client_sock < 0) {
-        cerr << "Failed to accept client connection.\n";
-        close(server_sock);
-        return 1;
-    }
-    cout << "Client connected.\n";
+    while (true) {
+        int client_sock = accept(server_sock, nullptr, nullptr);
+        if (client_sock < 0) {
+            cerr << "Failed to accept client connection.\n";
+            break;
+        }
+        cout << "Client connected.\n";
 
-    string command;
-    if (!receive_data(client_sock, command)) {
-        cerr << "Failed to receive command.\n";
+        string command;
+        if (!receive_data(client_sock, command)) {
+            cerr << "Failed to receive command.\n";
+            close(client_sock);
+            continue;
+        }
+        cout << "Received command: " << command << "\n";
+
+        if (command == "SUBMIT") {
+            handle_submit_request(client_sock);
+        }
+        else if (command == "CLONE") {
+            handle_clone_request(client_sock);
+        }
+        else if (command == "LIST") {
+            handle_list_request(client_sock);
+        }
+        else {
+            cerr << "Unknown command: " << command << "\n";
+            send_ack(client_sock, 0);
+        }
+
         close(client_sock);
-        close(server_sock);
-        return 1;
+        cout << "Connection closed.\n";
     }
-    cout << "Received command: " << command << "\n";
-
-    if (command == "SUBMIT") {
-        handle_submit_request(client_sock);
-    }
-    else if (command == "CLONE") {
-        handle_clone_request(client_sock);
-    }
-    else if (command == "LIST") {
-        handle_list_request(client_sock);
-    }
-    else {
-        cerr << "Unknown command: " << command << "\n";
-        send_ack(client_sock, 0); 
-    }
-
-    close(client_sock);
     close(server_sock);
-    cout << "Connection closed.\n";
     return 0;
 }
 
