@@ -13,7 +13,7 @@
 #include <arpa/inet.h>
 #include <cstring>
 #include <unordered_set>
-#include "FTP.cpp"  //for file transfering must be compiled together 
+#include "FTP.h"  // for file transferring
 
 namespace fs = std::filesystem;
 

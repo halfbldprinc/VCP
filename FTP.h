@@ -1,0 +1,18 @@
+#ifndef FTP_H
+#define FTP_H
+
+#include <string>
+
+class FileTransfer {
+private:
+    bool send_chunk(int sock, const void* data, size_t length);
+    void send_string(int sock, const std::string &str);
+    bool pump_file(int sock, const std::string &path);
+    bool get_confirmation(int sock);
+public:
+    int submit();
+    int clone_project(const std::string &project_name);
+    int list_projects();
+};
+
+#endif // FTP_H
