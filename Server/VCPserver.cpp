@@ -81,6 +81,16 @@ bool receive_file(int sock, const string &save_path) {
     uint64_t net_size;
     if (!recv_all(sock, reinterpret_cast<char*>(&net_size), sizeof(net_size))) return false;
     uint64_t file_size = ntohll(net_size);
+    fs::path outpath(save_path);
+    fs::path parent = outpath.parent_path();
+    if(!parent.empty() && !fs::exists(parent)) {
+        try {
+            fs::create_directories(parent);
+        } catch(const fs::filesystem_error &e) {
+            cerr << "Error creating directories: " << e.what() << "\n";
+            return false;
+        }
+    }
 
     ofstream outfile(save_path, ios::binary);
     if (!outfile) {
@@ -380,13 +390,17 @@ bool handle_submit_request(int client_sock) {
         }
         // An empty string signals end-of-transfer.
         if (filepath.empty()) break;
+        // Reject absolute paths or parent traversal attempts
+        if (fs::path(filepath).is_absolute() || filepath.find("..") != string::npos) {
+            cerr << "Rejected unsafe filepath: " << filepath << "\n";
+            send_ack(client_sock, 0);
+            continue;
+        }
 
-        // Save file inside the project folder using only the filename.
-        fs::path p(filepath);
-        string filename = p.filename().string();
-        string save_path = project_name + "/" + filename;
-        cout << "Receiving file: " << filepath << " -> " << save_path << "\n";
-        if (receive_file(client_sock, save_path)) {
+        // Preserve relative path when saving under the project directory
+        fs::path save_path = fs::path(project_name) / fs::path(filepath);
+        cout << "Receiving file: " << filepath << " -> " << save_path.string() << "\n";
+        if (receive_file(client_sock, save_path.string())) {
             if (!send_ack(client_sock, 1)) {
                 cerr << "Failed to send ack for file: " << filepath << "\n";
                 break;
