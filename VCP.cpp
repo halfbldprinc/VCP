@@ -7,7 +7,7 @@
 #include <sstream>
 #include <chrono>
 #include <iomanip>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -24,7 +24,7 @@ string cpath, vcpPath;
 
 class VCP {
 private:
-    //using SHA-256 (OpenSSL)
+    //using SHA-256 (OpenSSL EVP)
     string hashFile(const string &fpath) {
         ifstream file(fpath, ios::binary);
         if (!file) {
@@ -32,21 +32,44 @@ private:
             return "";
         }
 
-        SHA256_CTX ctx;
-        SHA256_Init(&ctx);
+        EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+        if (!mdctx) {
+            cerr << "Failed to create OpenSSL digest context" << endl;
+            return "";
+        }
+
+        if (1 != EVP_DigestInit_ex(mdctx, EVP_sha256(), nullptr)) {
+            cerr << "EVP_DigestInit_ex failed" << endl;
+            EVP_MD_CTX_free(mdctx);
+            return "";
+        }
+
         char buf[8192];
         while (file.good()) {
             file.read(buf, sizeof(buf));
             std::streamsize n = file.gcount();
-            if (n > 0)
-                SHA256_Update(&ctx, buf, n);
+            if (n > 0) {
+                if (1 != EVP_DigestUpdate(mdctx, buf, (size_t)n)) {
+                    cerr << "EVP_DigestUpdate failed" << endl;
+                    EVP_MD_CTX_free(mdctx);
+                    return "";
+                }
+            }
         }
-        unsigned char hash[SHA256_DIGEST_LENGTH];
-        SHA256_Final(hash, &ctx);
+
+        unsigned char md_value[EVP_MAX_MD_SIZE];
+        unsigned int md_len = 0;
+        if (1 != EVP_DigestFinal_ex(mdctx, md_value, &md_len)) {
+            cerr << "EVP_DigestFinal_ex failed" << endl;
+            EVP_MD_CTX_free(mdctx);
+            return "";
+        }
+
+        EVP_MD_CTX_free(mdctx);
 
         stringstream hs;
-        for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i)
-            hs << hex << setw(2) << setfill('0') << (int)hash[i];
+        for (unsigned int i = 0; i < md_len; ++i)
+            hs << hex << setw(2) << setfill('0') << (int)md_value[i];
         return hs.str();
     }
 
