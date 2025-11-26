@@ -42,10 +42,160 @@ namespace fs = std::filesystem;
 #define SERVER_PORT 8080
 #define BUFFER_SIZE 1024
 
+#include <sqlite3.h>
+#include <random>
+#include <sstream>
+#include <openssl/evp.h>
+//lock 
+static std::mutex db_mutex;
+
+static sqlite3 *g_db = nullptr;
+
+static string sha256_hex(const string &input) {
+    EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+    if(!mdctx) return string();
+    if(1 != EVP_DigestInit_ex(mdctx, EVP_sha256(), nullptr)) { EVP_MD_CTX_free(mdctx); return string(); }
+    if(1 != EVP_DigestUpdate(mdctx, input.data(), input.size())) { EVP_MD_CTX_free(mdctx); return string(); }
+    unsigned char md_value[EVP_MAX_MD_SIZE];
+    unsigned int md_len = 0;
+    if(1 != EVP_DigestFinal_ex(mdctx, md_value, &md_len)) { EVP_MD_CTX_free(mdctx); return string(); }
+    EVP_MD_CTX_free(mdctx);
+    stringstream ss;
+    ss << hex << setfill('0');
+    for(unsigned int i=0;i<md_len;++i) ss << setw(2) << (int)md_value[i];
+    return ss.str();
+}
+
+static string random_hex(size_t len) {
+    static std::random_device rd;
+    static std::mt19937_64 gen(rd());
+    static std::uniform_int_distribution<uint64_t> dis(0, UINT64_MAX);
+    string out;
+    out.reserve(len*2);
+    while(out.size() < len*2) {
+        uint64_t v = dis(gen);
+        std::stringstream ss;
+        ss << hex << setw(16) << setfill('0') << v;
+        out += ss.str();
+    }
+    out.resize(len*2);
+    return out;
+}
+
+static bool db_init(const string &path = "vcp_server.db") {
+    int rc = sqlite3_open_v2(path.c_str(), &g_db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
+    if(rc != SQLITE_OK) {
+        return false;
+    }
+    sqlite3_busy_timeout(g_db, 5000);
+    const char *create_users =
+        "CREATE TABLE IF NOT EXISTS users("
+        "user_id TEXT PRIMARY KEY,"
+        "email TEXT UNIQUE,"
+        "full_name TEXT,"
+        "phone TEXT UNIQUE,"
+        "password_hash TEXT,"
+        "created_at TEXT)";
+    const char *create_sessions =
+        "CREATE TABLE IF NOT EXISTS sessions("
+        "token TEXT PRIMARY KEY,"
+        "user_id TEXT,"
+        "created_at TEXT)";
+    char *err = nullptr;
+    if(sqlite3_exec(g_db, create_users, nullptr, nullptr, &err) != SQLITE_OK) {
+        if(err) sqlite3_free(err);
+        return false;
+    }
+    if(sqlite3_exec(g_db, create_sessions, nullptr, nullptr, &err) != SQLITE_OK) {
+        if(err) sqlite3_free(err);
+        return false;
+    }
+    return true;
+}
+
+static bool db_create_user(const string &user_id, const string &email, const string &full_name, const string &phone, const string &pw_hash, const string &created_at) {
+    std::lock_guard<std::mutex> lock(db_mutex);
+    const char *sql = "INSERT INTO users(user_id,email,full_name,phone,password_hash,created_at) VALUES(?,?,?,?,?,?)";
+    sqlite3_stmt *stmt = nullptr;
+    if(sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, user_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, email.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, full_name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, phone.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, pw_hash.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 6, created_at.c_str(), -1, SQLITE_TRANSIENT);
+    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+static bool db_get_user_by_email(const string &email, string &out_user_id, string &out_pw_hash) {
+    std::lock_guard<std::mutex> lock(db_mutex);
+    const char *sql = "SELECT user_id,password_hash FROM users WHERE email = ? LIMIT 1";
+    sqlite3_stmt *stmt = nullptr;
+    if(sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, email.c_str(), -1, SQLITE_TRANSIENT);
+    bool ok = false;
+    if(sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *uid = sqlite3_column_text(stmt, 0);
+        const unsigned char *ph = sqlite3_column_text(stmt, 1);
+        if(uid) out_user_id = reinterpret_cast<const char*>(uid);
+        if(ph) out_pw_hash = reinterpret_cast<const char*>(ph);
+        ok = true;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+static bool db_create_session(const string &token, const string &user_id, const string &created_at) {
+    std::lock_guard<std::mutex> lock(db_mutex);
+    const char *sql = "INSERT INTO sessions(token,user_id,created_at) VALUES(?,?,?)";
+    sqlite3_stmt *stmt = nullptr;
+    if(sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, user_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, created_at.c_str(), -1, SQLITE_TRANSIENT);
+    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+static bool db_get_user_by_token(const string &token, string &out_user_id) {
+    std::lock_guard<std::mutex> lock(db_mutex);
+    const char *sql = "SELECT user_id FROM sessions WHERE token = ? LIMIT 1";
+    sqlite3_stmt *stmt = nullptr;
+    if(sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
+    bool ok = false;
+    if(sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *uid = sqlite3_column_text(stmt, 0);
+        if(uid) out_user_id = reinterpret_cast<const char*>(uid);
+        ok = true;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+static bool db_get_user_by_phone(const string &phone, string &out_user_id) {
+    const char *sql = "SELECT user_id FROM users WHERE phone = ? LIMIT 1";
+    sqlite3_stmt *stmt = nullptr;
+    if(sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, phone.c_str(), -1, SQLITE_TRANSIENT);
+    bool ok = false;
+    if(sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *uid = sqlite3_column_text(stmt, 0);
+        if(uid) out_user_id = reinterpret_cast<const char*>(uid);
+        ok = true;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
 // Declarition of functions
 bool handle_submit_request(int client_sock);
 bool handle_clone_request(int client_sock);
 bool handle_list_request(int client_sock);
+bool handle_auth_request(int client_sock);
 
 // Helper to receive exactly n bytes
 bool recv_all(int sock, char *buffer, size_t len) {
@@ -241,15 +391,33 @@ bool handle_clone_request(int client_sock) {
 
 bool handle_list_request(int client_sock) {
     cout << "List request received\n";
+    // Expect a session token (may be empty) next from client
+    string token;
+    if(!receive_data(client_sock, token)) {
+        cerr << "Failed to receive session token for LIST\n";
+        return false;
+    }
+
     try {
-        for(const auto& entry : fs::directory_iterator(".")) {
-            if(fs::is_directory(entry) && entry.path().filename().string()[0] != '.') {
-                string project_name = entry.path().filename().string();
-                cout << "Sending project: " << project_name << endl;
-                
-                if(!send_string_to_client(client_sock, project_name)) {
-                    cerr << "Failed to send project name: " << project_name << endl;
-                    return false;
+        if(token.empty()) {
+            cout << "Unauthenticated LIST request - no projects will be returned\n";
+        } else {
+            string user_id;
+            if(!db_get_user_by_token(token, user_id)) {
+                cerr << "Invalid session token for LIST\n";
+            } else {
+                fs::path user_root = fs::path("users") / user_id;
+                if(fs::exists(user_root) && fs::is_directory(user_root)) {
+                    for(const auto &entry : fs::recursive_directory_iterator(user_root)) {
+                        if(fs::is_regular_file(entry)) {
+                            string rel = fs::relative(entry.path(), user_root).string();
+                            cout << "Sending user file: " << rel << endl;
+                            if(!send_string_to_client(client_sock, rel)) {
+                                cerr << "Failed to send user file: " << rel << endl;
+                                return false;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -268,9 +436,101 @@ bool handle_list_request(int client_sock) {
     return true;
 }
 
+bool handle_auth_request(int client_sock) {
+    cout << "Auth request received\n";
+    string sub;
+    if(!receive_data(client_sock, sub)) {
+        cerr << "Failed to receive auth subcommand\n";
+        send_ack(client_sock, 0);
+        return false;
+    }
+    if(sub == "SIGNUP") {
+        string email, full_name, password, phone;
+        if(!receive_data(client_sock, email) || !receive_data(client_sock, full_name) || !receive_data(client_sock, password) || !receive_data(client_sock, phone)) {
+            cerr << "Incomplete signup data\n";
+            send_ack(client_sock, 0);
+            return false;
+        }
+        string tmp_uid, tmp_hash;
+        if(db_get_user_by_email(email, tmp_uid, tmp_hash)) {
+            send_ack(client_sock, 0);
+            send_string_to_client(client_sock, "Email already in use");
+            return false;
+        }
+        string tmp_uid2;
+        if(db_get_user_by_phone(phone, tmp_uid2)) {
+            send_ack(client_sock, 0);
+            send_string_to_client(client_sock, "Phone number already in use");
+            return false;
+        }
+        // generate user id
+        string user_id = "u_" + random_hex(12);
+        string pw_hash = sha256_hex(password);
+        auto now = chrono::system_clock::now();
+        time_t now_c = chrono::system_clock::to_time_t(now);
+        string created = ctime(&now_c);
+        if(!created.empty() && created.back() == '\n') created.pop_back();
+        if(!db_create_user(user_id, email, full_name, phone, pw_hash, created)) {
+            send_ack(client_sock, 0);
+            send_string_to_client(client_sock, "Failed to create user (db error)");
+            return false;
+        }
+        // create user folder
+        fs::path user_root = fs::path("users") / user_id;
+        try { fs::create_directories(user_root); } catch(...) {}
+        
+        string token = random_hex(16);
+        if(!db_create_session(token, user_id, created)) {
+            send_ack(client_sock, 0);
+            send_string_to_client(client_sock, "Failed to create session");
+            return false;
+        }
+        send_ack(client_sock, 1);
+        send_string_to_client(client_sock, token);
+        cout << "Created new user: " << email << " -> " << user_id << endl;
+        return true;
+    }
+    else if(sub == "LOGIN") {
+        string email, password;
+        if(!receive_data(client_sock, email) || !receive_data(client_sock, password)) {
+            cerr << "Incomplete login data\n";
+            send_ack(client_sock, 0);
+            return false;
+        }
+        string user_id, pw_hash;
+        if(!db_get_user_by_email(email, user_id, pw_hash)) {
+            send_ack(client_sock, 0);
+            send_string_to_client(client_sock, "Unknown email or wrong password");
+            return false;
+        }
+        if(sha256_hex(password) != pw_hash) {
+            send_ack(client_sock, 0);
+            send_string_to_client(client_sock, "Unknown email or wrong password");
+            return false;
+        }
+        auto now = chrono::system_clock::now();
+        time_t now_c = chrono::system_clock::to_time_t(now);
+        string created = ctime(&now_c);
+        if(!created.empty() && created.back() == '\n') created.pop_back();
+        string token = random_hex(16);
+        if(!db_create_session(token, user_id, created)) {
+            send_ack(client_sock, 0);
+            send_string_to_client(client_sock, "Failed to create session");
+            return false;
+        }
+        send_ack(client_sock, 1);
+        send_string_to_client(client_sock, token);
+        cout << "Login success for " << email << " -> " << user_id << endl;
+        return true;
+    }
+    else {
+        cerr << "Unknown auth subcommand: " << sub << endl;
+        send_ack(client_sock, 0);
+        return false;
+    }
+}
+
 int main() {
-        // Install SIGINT handler without SA_RESTART so blocking system calls
-        // like accept() are interrupted and return with errno == EINTR.
         struct sigaction sa;
         sa.sa_handler = handle_sigint;
         sigemptyset(&sa.sa_mask);
@@ -309,6 +569,11 @@ int main() {
         return 1;
     }
 
+    // Initialize SQLite DB for auth
+    if(!db_init("vcp_server.db")) {
+        cerr << "Warning: Failed to initialize SQLite DB (auth disabled)\n";
+    }
+
     cout << "Server listening on port " << SERVER_PORT << "...\n";
 
     std::atomic<int> client_count{0};
@@ -333,6 +598,8 @@ int main() {
             handle_submit_request(client_sock);
         } else if (command == "CLONE") {
             handle_clone_request(client_sock);
+        } else if (command == "AUTH") {
+            handle_auth_request(client_sock);
         } else if (command == "LIST") {
             handle_list_request(client_sock);
         } else {
@@ -399,6 +666,19 @@ int main() {
 }
 
 bool handle_submit_request(int client_sock) {
+    string session_token;
+    if(!receive_data(client_sock, session_token)) {
+        cerr << "Failed to receive session token for SUBMIT.\n";
+        send_ack(client_sock, 0);
+        return false;
+    }
+    string user_id;
+    if(session_token.empty() || !db_get_user_by_token(session_token, user_id)) {
+        cerr << "Invalid or missing session token for SUBMIT\n";
+        send_ack(client_sock, 0);
+        return false;
+    }
+
     string project_name;
     if (!receive_data(client_sock, project_name)) {
         cerr << "Failed to receive project name.\n";
@@ -406,7 +686,6 @@ bool handle_submit_request(int client_sock) {
     }
     cout << "Received project name: " << project_name << "\n";
 
-    // Validate project name: allow letters, numbers, dot, underscore, hyphen; length 1-100
     std::regex valid_name("^[A-Za-z0-9._-]{1,100}$");
     if (!std::regex_match(project_name, valid_name)) {
         cerr << "Invalid project name received: " << project_name << "\n";
@@ -414,13 +693,16 @@ bool handle_submit_request(int client_sock) {
         return false;
     }
 
-    if (!fs::exists(project_name)) {
-        if (!fs::create_directory(project_name)) {
-            cerr << "Failed to create directory: " << project_name << "\n";
-            return false;
-        }
+    // Save under users/<user_id>/<project_name>/...
+    fs::path base = fs::path("users") / user_id / project_name;
+    try {
+        fs::create_directories(base);
+    } catch(const fs::filesystem_error &e) {
+        cerr << "Failed to create user project directory: " << e.what() << "\n";
+        send_ack(client_sock, 0);
+        return false;
     }
-    // Send ack for project name
+    // Send ack for project name (and token validation)
     if (!send_ack(client_sock, 1)) {
         cerr << "Failed to send ack for project name.\n";
         return false;
@@ -442,8 +724,8 @@ bool handle_submit_request(int client_sock) {
             continue;
         }
 
-        // Preserve relative path when saving under the project directory
-        fs::path save_path = fs::path(project_name) / fs::path(filepath);
+        // Preserve relative path when saving under the user's project directory
+        fs::path save_path = base / fs::path(filepath);
         cout << "Receiving file: " << filepath << " -> " << save_path.string() << "\n";
         if (receive_file(client_sock, save_path.string())) {
             if (!send_ack(client_sock, 1)) {

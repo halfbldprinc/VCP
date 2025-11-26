@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
 #include <cstring>
 #include <unordered_set>
 #include <fnmatch.h>
@@ -380,7 +381,87 @@ public:
     
     void list() {
         FileTransfer ft;
-        ft.list_projects();
+        // read session token from user's home if exists
+        std::string session_token;
+        const char *home = getenv("HOME");
+        if(home) {
+            std::string token_path = std::string(home) + "/.vcp_session";
+            if(fs::exists(token_path)) {
+                std::ifstream t(token_path);
+                if(t) {
+                    std::getline(t, session_token);
+                    session_token = trim(session_token);
+                }
+            }
+        }
+        ft.list_projects(session_token);
+    }
+
+    void auth() {
+        FileTransfer ft;
+        cout << "Authenticate: (1) Log In  (2) Sign Up\nChoose: ";
+        int choice = 0;
+        if(!(cin >> choice)) {
+            cerr << "Invalid choice\n";
+            return;
+        }
+        cin.ignore();
+        if(choice == 2) {
+            string email, name, password, phone;
+            cout << "Email: ";
+            getline(cin, email);
+            cout << "Full Name: ";
+            getline(cin, name);
+            cout << "Password: ";
+            getline(cin, password);
+            cout << "Phone Number: ";
+            getline(cin, phone);
+
+            string token;
+            int r = ft.auth_signup(email, name, password, phone, token);
+            if(r == 0) {
+                cout << "Signup successful. Session created.\n";
+                const char *home = getenv("HOME");
+                if(home) {
+                    std::string token_path = std::string(home) + "/.vcp_session";
+                    ofstream out(token_path);
+                        if(out) {
+                            out << token << endl;
+                            out.close();
+                            // tighten permissions on token file to owner read/write only
+                            chmod(token_path.c_str(), S_IRUSR | S_IWUSR);
+                        }
+                }
+            } else {
+                cerr << "Signup failed\n";
+            }
+        } else if(choice == 1) {
+            string email, password;
+            cout << "Email: ";
+            getline(cin, email);
+            cout << "Password: ";
+            getline(cin, password);
+            string token;
+            int r = ft.auth_login(email, password, token);
+            if(r == 0) {
+                cout << "Login successful. Session created.\n";
+                const char *home = getenv("HOME");
+                if(home) {
+                    std::string token_path = std::string(home) + "/.vcp_session";
+                    ofstream out(token_path);
+                    if(out) {
+                        out << token << endl;
+                        out.close();
+                        // tighten permissions on token file to owner read/write only
+                        chmod(token_path.c_str(), S_IRUSR | S_IWUSR);
+                    }
+                }
+            } else {
+                cerr << "Login failed\n";
+            }
+        } else {
+            cerr << "Unknown option\n";
+        }
     }
     
     void commit(const string &message, const string &author) {
@@ -478,6 +559,9 @@ int main(int argc, char *argv[]) {
     }
     else if(cmd == "submit") {
         vcp.submit();
+    }
+    else if(cmd == "auth") {
+        vcp.auth();
     }
     else if(cmd == "commit") {
         string message;

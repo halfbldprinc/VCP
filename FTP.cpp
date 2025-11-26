@@ -113,6 +113,31 @@ bool FileTransfer::get_confirmation(int sock) {
 }
 
 int FileTransfer::submit() {
+    // Read tracker file and project name first
+    ifstream tracker(TRACKER_FILE);
+    if(!tracker) {
+        cerr << "Can't find tracker file \n";
+        return 1;
+    }
+
+    string project_name;
+    getline(tracker, project_name);
+    string session_token;
+    const char *home = getenv("HOME");
+    if(home) {
+        string token_path = string(home) + "/.vcp_session";
+        ifstream t(token_path);
+            if(t) {
+                getline(t, session_token);
+                while(!session_token.empty() && isspace((unsigned char)session_token.back())) session_token.pop_back();
+            }
+    }
+    if(session_token.empty()) {
+        cerr << "Not authenticated. Run './vcp auth' to log in or sign up before submitting.\n";
+        return 1;
+    }
+
+
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if(sock < 0) {
         cerr << "Something went wrong\n";
@@ -127,16 +152,6 @@ int FileTransfer::submit() {
         close(sock);
         return 1;
     }
-
-    ifstream tracker(TRACKER_FILE);
-    if(!tracker) {
-        cerr << "Can't find tracker file \n";
-        close(sock);
-        return 1;
-    }
-
-    string project_name;
-    getline(tracker, project_name);
     std::regex valid_name("^[A-Za-z0-9._-]{1,100}$");
     if (!std::regex_match(project_name, valid_name)) {
         cerr << "Invalid project name in tracker: " << project_name << "\n";
@@ -151,6 +166,7 @@ int FileTransfer::submit() {
 
     try {
         send_string(sock, "SUBMIT");
+        send_string(sock, session_token);
         send_string(sock, project_name);
     } catch(const exception &e) {
         cerr << "Project name send failed: " << e.what() << endl;
@@ -274,7 +290,9 @@ int FileTransfer::clone_project(const string &project_name) {
     return 0;
 }
 
-int FileTransfer::list_projects() {
+
+
+int FileTransfer::list_projects(const std::string &session_token) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if(sock < 0) {
         cerr << "Socket creation failed\n";
@@ -291,6 +309,7 @@ int FileTransfer::list_projects() {
     }
     try {
         send_string(sock, "LIST");
+        send_string(sock, session_token);
     } catch(const exception &e) {
         cerr << "Failed to send list request: " << e.what() << endl;
         close(sock);
@@ -313,6 +332,148 @@ int FileTransfer::list_projects() {
         project_name = buffer.data();
         cout << "  - " << project_name << endl;
     }
+    close(sock);
+    return 0;
+}
+
+int FileTransfer::auth_signup(const std::string &email,
+                              const std::string &full_name,
+                              const std::string &password,
+                              const std::string &phone,
+                              std::string &out_token) {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0) {
+        cerr << "Socket creation failed\n";
+        return 1;
+    }
+    sockaddr_in server_addr{};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(SERVER_PORT);
+    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+    if(connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        cerr << "Connection failed - make sure server is running\n";
+        close(sock);
+        return 1;
+    }
+    try {
+        send_string(sock, "AUTH");
+        send_string(sock, "SIGNUP");
+        send_string(sock, email);
+        send_string(sock, full_name);
+        send_string(sock, password);
+        send_string(sock, phone);
+    } catch(const exception &e) {
+        cerr << "Failed to send signup request: " << e.what() << endl;
+        close(sock);
+        return 1;
+    }
+
+    if(!get_confirmation(sock)) {
+        uint32_t len;
+        if(recv(sock, &len, sizeof(len), 0) == sizeof(len)) {
+            len = ntohl(len);
+            if(len > 0) {
+                std::vector<char> buf(len+1);
+                if(recv_all(sock, buf.data(), len)) {
+                    buf[len] = '\0';
+                    cerr << "Signup failed: " << buf.data() << endl;
+                }
+            }
+        }
+        close(sock);
+        return 1;
+    }
+
+    // read token
+    uint32_t len;
+    if(recv(sock, &len, sizeof(len), 0) != sizeof(len)) {
+        cerr << "Failed reading token length\n";
+        close(sock);
+        return 1;
+    }
+    len = ntohl(len);
+    if(len == 0) {
+        cerr << "Server returned empty token\n";
+        close(sock);
+        return 1;
+    }
+    std::vector<char> buf(len+1);
+    if(!recv_all(sock, buf.data(), len)) {
+        cerr << "Failed reading token body\n";
+        close(sock);
+        return 1;
+    }
+    buf[len] = '\0';
+    out_token = buf.data();
+    close(sock);
+    return 0;
+}
+
+int FileTransfer::auth_login(const std::string &email,
+                             const std::string &password,
+                             std::string &out_token) {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0) {
+        cerr << "Socket creation failed\n";
+        return 1;
+    }
+    sockaddr_in server_addr{};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(SERVER_PORT);
+    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+    if(connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        cerr << "Connection failed - make sure server is running\n";
+        close(sock);
+        return 1;
+    }
+    try {
+        send_string(sock, "AUTH");
+        send_string(sock, "LOGIN");
+        send_string(sock, email);
+        send_string(sock, password);
+    } catch(const exception &e) {
+        cerr << "Failed to send login request: " << e.what() << endl;
+        close(sock);
+        return 1;
+    }
+
+    if(!get_confirmation(sock)) {
+        uint32_t len;
+        if(recv(sock, &len, sizeof(len), 0) == sizeof(len)) {
+            len = ntohl(len);
+            if(len > 0) {
+                std::vector<char> buf(len+1);
+                if(recv_all(sock, buf.data(), len)) {
+                    buf[len] = '\0';
+                    cerr << "Login failed: " << buf.data() << endl;
+                }
+            }
+        }
+        close(sock);
+        return 1;
+    }
+
+    // read token
+    uint32_t len;
+    if(recv(sock, &len, sizeof(len), 0) != sizeof(len)) {
+        cerr << "Failed reading token length\n";
+        close(sock);
+        return 1;
+    }
+    len = ntohl(len);
+    if(len == 0) {
+        cerr << "Server returned empty token\n";
+        close(sock);
+        return 1;
+    }
+    std::vector<char> buf(len+1);
+    if(!recv_all(sock, buf.data(), len)) {
+        cerr << "Failed reading token body\n";
+        close(sock);
+        return 1;
+    }
+    buf[len] = '\0';
+    out_token = buf.data();
     close(sock);
     return 0;
 }

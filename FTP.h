@@ -13,7 +13,16 @@ private:
 public:
     int submit();
     int clone_project(const std::string &project_name);
-    int list_projects();
+    int list_projects(const std::string &session_token = "");
+    int auth_signup(const std::string &email,
+                    const std::string &full_name,
+                    const std::string &password,
+                    const std::string &phone,
+                    std::string &out_token);
+
+    int auth_login(const std::string &email,
+                   const std::string &password,
+                   std::string &out_token);
 };
 
-#endif // FTP_H
+#endif 
