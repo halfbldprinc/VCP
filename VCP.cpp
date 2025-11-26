@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <cstring>
 #include <unordered_set>
+#include <fnmatch.h>
 #include "FTP.h"  // for file transferring
 
 namespace fs = std::filesystem;
@@ -86,6 +87,59 @@ private:
         return is_exec || no_ext; 
     }
 
+    // .vcpignore support
+    std::vector<std::string> vcpignore_patterns;
+
+    static inline std::string trim(const std::string &s) {
+        size_t a = 0;
+        while (a < s.size() && isspace((unsigned char)s[a])) ++a;
+        size_t b = s.size();
+        while (b > a && isspace((unsigned char)s[b-1])) --b;
+        return s.substr(a, b-a);
+    }
+
+    void loadVcpIgnore() {
+        vcpignore_patterns.clear();
+        std::string ignore_path = cpath + "/.vcpignore";
+        if (!fs::exists(ignore_path)) return;
+        std::ifstream ig(ignore_path);
+        if(!ig) return;
+        std::string line;
+        while (std::getline(ig, line)) {
+            line = trim(line);
+            if (line.empty() || line[0] == '#') continue;
+            // normalize patterns: remove leading './'
+            if (line.rfind("./", 0) == 0) line = line.substr(2);
+            vcpignore_patterns.push_back(line);
+        }
+    }
+
+    bool isIgnored(const std::string &rel_path, bool is_dir=false) {
+        if (vcpignore_patterns.empty()) return false;
+        // convert rel_path to posix style (should already be)
+        std::string path = rel_path;
+        for (const auto &pat_in : vcpignore_patterns) {
+            std::string pat = pat_in;
+            // If pattern ends with '/', treat as directory-only pattern
+            bool dir_only = false;
+            if (!pat.empty() && pat.back() == '/') { dir_only = true; pat.pop_back(); }
+            if (dir_only && !is_dir) continue;
+
+            // fnmatch expects C strings; match against path
+            // Allow pattern to match anywhere: if pattern does not contain '/', try to match basename too
+            int flags = FNM_PATHNAME; // make / special
+            if (fnmatch(pat.c_str(), path.c_str(), flags) == 0) return true;
+
+            if (pat.find('/') == std::string::npos) {
+                // match against filename portion
+                auto pos = path.find_last_of('/');
+                std::string base = (pos==std::string::npos) ? path : path.substr(pos+1);
+                if (fnmatch(pat.c_str(), base.c_str(), 0) == 0) return true;
+            }
+        }
+        return false;
+    }
+
 public:
 
 // Set up new project
@@ -100,6 +154,21 @@ public:
         if (!fs::create_directory(vcpPath)) {
             cerr << "Failed to create .vcp directory - permissions issue?\n";
             return;
+        }
+
+        // Create a default .vcpignore if one doesn't exist
+        std::string ignore_path = cpath + "/.vcpignore";
+        if (!fs::exists(ignore_path)) {
+            std::ofstream ig(ignore_path);
+            if (ig) {
+                ig << "# .vcpignore - files and folders to ignore\n";
+                ig << ".vcp/\n";
+                ig << "*.o\n";
+                ig << "*.exe\n";
+                ig << "*.log\n";
+                ig << "node_modules/\n";
+                ig << ".DS_Store\n";
+            }
         }
 
         // Get project name from user
@@ -151,18 +220,26 @@ public:
         tf.close();
 
         // Scan current dir
+        loadVcpIgnore();
         unordered_map<string,string> new_items;
         unordered_map<string,string> changed_files;
         
         try {
-            for(const auto& entry : fs::recursive_directory_iterator(cpath, 
-                fs::directory_options::skip_permission_denied)) 
+            for (auto it = fs::recursive_directory_iterator(cpath, 
+                    fs::directory_options::skip_permission_denied);
+                 it != fs::recursive_directory_iterator(); ++it)
             {
+                const auto &entry = *it;
                 string rel_path = fs::relative(entry.path(), cpath).string();
-                
+
                 // Skip hidden files
-                if(rel_path.find("/.") != string::npos || 
-                   rel_path[0] == '.') continue;
+                if(rel_path.find("/.") != string::npos || rel_path[0] == '.') continue;
+
+                // Skip patterns from .vcpignore. If a directory is ignored, disable recursion
+                if (isIgnored(rel_path, fs::is_directory(entry.path()))) {
+                    if (fs::is_directory(entry.path())) it.disable_recursion_pending();
+                    continue;
+                }
 
                 if(fs::is_regular_file(entry)) {
                     string current_hash = hashFile(entry.path().string());
@@ -231,13 +308,22 @@ public:
 
         // Process input path
         string rel_path = fs::relative(fpath, cpath).string();
+        loadVcpIgnore();
         
         if (fs::is_directory(fpath)) {
             // Add directory contents
             try {
-                for(const auto& entry : fs::recursive_directory_iterator(fpath)) {
+                for (auto it = fs::recursive_directory_iterator(fpath);
+                     it != fs::recursive_directory_iterator(); ++it) {
+                    const auto &entry = *it;
+                    // Skip ignored patterns
+                    string item_rel = fs::relative(entry.path(), cpath).string();
+                    if (isIgnored(item_rel, fs::is_directory(entry.path()))) {
+                        if (fs::is_directory(entry.path())) it.disable_recursion_pending();
+                        continue;
+                    }
+
                     if(fs::is_regular_file(entry) && !isExe(entry.path())) {
-                        string item_rel = fs::relative(entry.path(), cpath).string();
                         tracked[item_rel] = hashFile(entry.path().string());
                     }
                 }
