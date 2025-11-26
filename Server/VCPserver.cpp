@@ -1,15 +1,12 @@
 #include <csignal>
 #include <atomic>
-std::atomic<bool> server_running{true};
-
-void handle_sigint(int) {
-    std::cout << "\nSIGINT received. Shutting down server...\n";
-    log_event("SIGINT received. Shutting down server...");
-    server_running = false;
-}
+#include <iostream>
 #include <mutex>
 #include <fstream>
-#std::mutex log_mutex;
+#include <string>
+
+std::atomic<bool> server_running{true};
+static std::mutex log_mutex;
 
 void log_event(const std::string& msg) {
     std::lock_guard<std::mutex> lock(log_mutex);
@@ -18,9 +15,16 @@ void log_event(const std::string& msg) {
         log << msg << std::endl;
     }
 }
+
+void handle_sigint(int) {
+    std::cout << "\nSIGINT received. Shutting down server...\n";
+    log_event("SIGINT received. Shutting down server...");
+    server_running = false;
+}
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <iomanip>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -101,13 +105,21 @@ bool receive_file(int sock, const string &save_path) {
 
     char buffer[BUFFER_SIZE];
     uint64_t remaining = file_size;
+    uint64_t total = file_size;
+    uint64_t received = 0;
     while (remaining > 0) {
         size_t to_read = (remaining < BUFFER_SIZE) ? remaining : BUFFER_SIZE;
         ssize_t r = recv(sock, buffer, to_read, 0);
         if (r <= 0) return false;
         outfile.write(buffer, r);
         remaining -= r;
+        received += r;
+        double pct = (total > 0) ? (100.0 * received / total) : 100.0;
+        cout << "Receiving: " << save_path << " - " << received << "/" << total
+             << " bytes (" << fixed << setprecision(1) << pct << "% )\r";
+        cout.flush();
     }
+    cout << endl;
     outfile.close();
     return true;
 }
@@ -130,6 +142,8 @@ bool send_file_to_client(int sock, const string &file_path) {
 
     // Send file content
     char buffer[BUFFER_SIZE];
+    uint64_t total = file_size;
+    uint64_t sent = 0;
     while(file_size > 0) {
         size_t read_size = (file_size < BUFFER_SIZE) ? file_size : BUFFER_SIZE;
         file.read(buffer, read_size);
@@ -137,7 +151,13 @@ bool send_file_to_client(int sock, const string &file_path) {
             return false;
         }
         file_size -= read_size;
+        sent += read_size;
+        double pct = (total > 0) ? (100.0 * sent / total) : 100.0;
+        cout << "Sending: " << file_path << " - " << sent << "/" << total
+             << " bytes (" << fixed << setprecision(1) << pct << "% )\r";
+        cout.flush();
     }
+    cout << endl;
 
     return true;
 }

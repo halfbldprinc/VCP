@@ -8,6 +8,7 @@ private:
     bool send_chunk(int sock, const void* data, size_t length);
     void send_string(int sock, const std::string &str);
     bool pump_file(int sock, const std::string &path);
+    bool receive_file_from_server(int sock, const std::string &save_path);
     bool get_confirmation(int sock);
 public:
     int submit();
