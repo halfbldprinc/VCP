@@ -16,6 +16,7 @@
 #include <unordered_set>
 #include <fnmatch.h>
 #include "FTP.h"  // for file transferring
+#include "objects.h"
 
 namespace fs = std::filesystem;
 
@@ -381,6 +382,61 @@ public:
         FileTransfer ft;
         ft.list_projects();
     }
+    
+    void commit(const string &message, const string &author) {
+        string tracker_path = vcpPath + "/tracker.txt";
+        if(!fs::exists(tracker_path)) {
+            cerr << "No tracker file - nothing staged to commit\n";
+            return;
+        }
+
+        if(!fs::exists(vcpPath)) {
+            cerr << "No .vcp directory - run 'init' first\n";
+            return;
+        }
+        string tree_hash = write_tree_from_tracker(tracker_path, vcpPath);
+        if(tree_hash.empty()) { cerr << "Failed to write tree object\n"; return; }
+
+        string parent = read_HEAD(vcpPath);
+        vector<string> parents;
+        if(!parent.empty()) parents.push_back(parent);
+
+        string committer = author.empty() ? "vcp <vcp@local>" : author;
+        string author_field = committer;
+
+        string commit_hash = write_commit_object(tree_hash, parents, author_field, committer, message, vcpPath);
+        if(commit_hash.empty()) { cerr << "Failed to write commit object\n"; return; }
+
+        if(!update_HEAD(vcpPath, commit_hash)) { cerr << "Failed to update HEAD\n"; return; }
+
+        cout << "Committed as " << commit_hash << "\n";
+    }
+
+    void log() {
+        string head = read_HEAD(vcpPath);
+        if(head.empty()) { cout << "No commits yet\n"; return; }
+        string cur = head;
+        while(!cur.empty()) {
+            string body = read_commit_object(cur, vcpPath);
+            if(body.empty()) break;
+            std::istringstream iss(body);
+            string line;
+            string author;
+            string message;
+            vector<string> parents;
+            while(std::getline(iss, line)) {
+                if(line.empty()) break;
+                if(line.rfind("author ",0) == 0) author = line.substr(7);
+                else if(line.rfind("parent ",0) == 0) parents.push_back(line.substr(7));
+            }
+            std::string msg;
+            std::getline(iss, msg, '\0');
+            cout << "commit " << cur << "\n";
+            if(!author.empty()) cout << "Author: " << author << "\n";
+            cout << msg << "\n\n";
+            if(!parents.empty()) cur = parents[0]; else break;
+        }
+    }
 
     void help() {
         cout << "VCP - Version Control Program\n";
@@ -422,6 +478,23 @@ int main(int argc, char *argv[]) {
     }
     else if(cmd == "submit") {
         vcp.submit();
+    }
+    else if(cmd == "commit") {
+        string message;
+        string author;
+        for(int i=2;i<argc;++i) {
+            string a = argv[i];
+            if(a == "-m" && i+1<argc) { message = argv[++i]; }
+            else if(a == "--author" && i+1<argc) { author = argv[++i]; }
+        }
+        if(message.empty()) {
+            cerr << "Missing commit message. Use -m \"message\"\n";
+            return 1;
+        }
+        vcp.commit(message, author);
+    }
+    else if(cmd == "log") {
+        vcp.log();
     }
     else if(cmd == "clone") {
         if(argc < 3) {
