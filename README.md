@@ -24,7 +24,7 @@ Single-file compile (pkg-config fallback):
 
 ```bash
 g++ VCP.cpp FTP.cpp -o vcp -std=c++17 $(pkg-config --cflags --libs openssl)
-g++ Server/VCPserver.cpp -o vcpserver -std=c++17
+g++ Server/server_main.cpp Server/protocol.cpp Server/storage.cpp Server/logging.cpp Server/auth.cpp -o vcpserver -std=c++17 $(pkg-config --cflags --libs sqlite3 openssl)
 ```
 
 ## Usage
@@ -60,7 +60,7 @@ Manual (Homebrew) macOS example:
 
 g++ VCP.cpp FTP.cpp -o vcp -std=c++17 -I$(brew --prefix openssl@3)/include -L$(brew --prefix openssl@3)/lib -Wl,-rpath,$(brew --prefix openssl@3)/lib -lssl -lcrypto
 
-g++ Server/VCPserver.cpp -o vcpserver -std=c++17
+g++ Server/server_main.cpp Server/protocol.cpp Server/storage.cpp Server/logging.cpp Server/auth.cpp -o vcpserver -std=c++17 -I$(brew --prefix openssl@3)/include -L$(brew --prefix openssl@3)/lib -Wl,-rpath,$(brew --prefix openssl@3)/lib -lssl -lcrypto -lsqlite3
 ```
 
 ## Contributing
