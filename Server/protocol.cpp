@@ -15,6 +15,7 @@ ProtocolCommand parse_command(const string &cmd_str) {
     if (s == "SUBMIT") return ProtocolCommand::SUBMIT;
     if (s == "CLONE")  return ProtocolCommand::CLONE;
     if (s == "LIST")   return ProtocolCommand::LIST;
+    if (s == "AUTH")   return ProtocolCommand::AUTH;
     return ProtocolCommand::UNKNOWN;
 }
 

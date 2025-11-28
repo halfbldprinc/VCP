@@ -90,6 +90,7 @@ int main() {
             case ProtocolCommand::SUBMIT: handle_submit_request(client_sock); break;
             case ProtocolCommand::CLONE:  handle_clone_request(client_sock);  break;
             case ProtocolCommand::LIST:   handle_list_request(client_sock);   break;
+            case ProtocolCommand::AUTH:   handle_auth_request(client_sock);   break;
             default: {
                 string unknown_msg = "Unknown command: " + command;
                 cerr << unknown_msg << "\n";

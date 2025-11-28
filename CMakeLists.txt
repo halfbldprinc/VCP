@@ -10,7 +10,11 @@ set(SRC_FILES
 )
 
 set(SERVER_SRC
-    Server/VCPserver.cpp
+  Server/server_main.cpp
+  Server/protocol.cpp
+  Server/storage.cpp
+  Server/logging.cpp
+  Server/auth.cpp
 )
 
 # Try the modern FindOpenSSL module first
@@ -34,3 +38,21 @@ else()
 endif()
 
 add_executable(vcpserver ${SERVER_SRC})
+
+if(OpenSSL_FOUND)
+  target_link_libraries(vcpserver PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+  target_include_directories(vcpserver PRIVATE ${OPENSSL_INCLUDE_DIR})
+elseif(OPENSSL_PKG_FOUND)
+  target_include_directories(vcpserver PRIVATE ${OPENSSL_PKG_INCLUDE_DIRS})
+  target_link_libraries(vcpserver PRIVATE ${OPENSSL_PKG_LIBRARIES})
+else()
+  message(WARNING "OpenSSL not found - server may lack password hashing support")
+endif()
+
+# Find and link SQLite3 for server (used for auth storage)
+find_package(SQLite3 REQUIRED)
+if(SQLite3_FOUND)
+  target_link_libraries(vcpserver PRIVATE SQLite::SQLite3)
+else()
+  message(WARNING "SQLite3 not found - server auth will not build correctly if missing")
+endif()

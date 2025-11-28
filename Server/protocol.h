@@ -7,6 +7,7 @@ enum class ProtocolCommand {
     SUBMIT,
     CLONE,
     LIST,
+    AUTH,
     UNKNOWN
 };
 
