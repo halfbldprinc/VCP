@@ -2,6 +2,7 @@
 #include "storage.h"
 #include "logging.h"
 #include "auth.h"
+#include "socket.h"
 #include <csignal>
 #include <atomic>
 #include <iostream>
@@ -33,15 +34,15 @@ int main() {
 
     signal(SIGINT, handle_sigint);
 
-    int server_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_sock < 0) {
+    Socket server_sock(::socket(AF_INET, SOCK_STREAM, 0));
+    if (!server_sock) {
         cerr << "Error creating server socket." << endl;
         return 1;
     }
     int opt = 1;
-    if (setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    if (setsockopt(server_sock.get(), SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         cerr << "setsockopt failed" << endl;
-        close(server_sock);
+        // server_sock will be closed automatically by RAII
         return 1;
     }
 
@@ -50,14 +51,12 @@ int main() {
     server_addr.sin_port = htons(SERVER_PORT);
     server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    if (::bind(server_sock, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr)) < 0) {
+    if (::bind(server_sock.get(), reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr)) < 0) {
         cerr << "Bind failed." << endl;
-        close(server_sock);
         return 1;
     }
-    if (listen(server_sock, 1) < 0) {
+    if (listen(server_sock.get(), 1) < 0) {
         cerr << "Listen failed." << endl;
-        close(server_sock);
         return 1;
     }
 
@@ -65,18 +64,17 @@ int main() {
 
     atomic<int> client_count{0};
 
-    auto client_handler = [&](int client_sock) {
+    auto client_handler = [&](Socket client_sock) {
         client_count++;
         string connect_msg = "Client connected. Active clients: " + to_string(client_count);
         cout << connect_msg << "\n";
         log_event(connect_msg);
 
         string command;
-        if (!receive_data(client_sock, command)) {
+        if (!receive_data(client_sock.get(), command)) {
             string err_msg = "Failed to receive command.";
             cerr << err_msg << "\n";
             log_event(err_msg);
-            close(client_sock);
             client_count--;
             return;
         }
@@ -87,20 +85,19 @@ int main() {
 
         //// Process commands
         switch (parse_command(command)) {
-            case ProtocolCommand::SUBMIT: handle_submit_request(client_sock); break;
-            case ProtocolCommand::CLONE:  handle_clone_request(client_sock);  break;
-            case ProtocolCommand::LIST:   handle_list_request(client_sock);   break;
-            case ProtocolCommand::AUTH:   handle_auth_request(client_sock);   break;
+            case ProtocolCommand::SUBMIT: handle_submit_request(client_sock.get()); break;
+            case ProtocolCommand::CLONE:  handle_clone_request(client_sock.get());  break;
+            case ProtocolCommand::LIST:   handle_list_request(client_sock.get());   break;
+            case ProtocolCommand::AUTH:   handle_auth_request(client_sock.get());   break;
             default: {
                 string unknown_msg = "Unknown command: " + command;
                 cerr << unknown_msg << "\n";
                 log_event(unknown_msg);
-                send_ack(client_sock, 0);
+                send_ack(client_sock.get(), 0);
                 break;
             }
         }
 
-        close(client_sock);
         string disconnect_msg = "Connection closed. Active clients: " + to_string(client_count - 1);
         cout << disconnect_msg << "\n";
         log_event(disconnect_msg);
@@ -114,33 +111,31 @@ int main() {
                 continue;
             }
 
-            int client_sock = accept(server_sock, nullptr, nullptr);
+            int raw_client_sock = accept(server_sock.get(), nullptr, nullptr);
             if (!server_running) {
-                if (client_sock >= 0) close(client_sock);
+                if (raw_client_sock >= 0) ::close(raw_client_sock);
                 break;
             }
 
-            if (client_sock < 0) {
+            if (raw_client_sock < 0) {
                 if (errno == EINTR && !server_running) break;
                 cerr << "Failed to accept client connection." << endl;
                 log_event("Failed to accept client connection.");
                 continue;
             }
-
-            thread([&, client_sock]() {
+            Socket client_sock(raw_client_sock);
+            thread([&, client_sock = std::move(client_sock)]() mutable {
                 try {
-                    client_handler(client_sock);
+                    client_handler(std::move(client_sock));
                 } catch (const exception& e) {
                     string err = "Exception in client handler: " + string(e.what());
                     cerr << err << "\n";
                     log_event(err);
-                    close(client_sock);
                     client_count--;
                 } catch (...) {
                     string err = "Unknown exception in client handler.";
                     cerr << err << "\n";
                     log_event(err);
-                    close(client_sock);
                     client_count--;
                 }
             }).detach();
@@ -156,7 +151,6 @@ int main() {
         }
     }
 
-    close(server_sock);
     db_close();
     log_event("Server socket closed. Exiting main.");
     cout << "Server shut down." << endl;
