@@ -269,7 +269,15 @@ bool handle_list_request(int client_sock) {
 }
 
 int main() {
-        std::signal(SIGINT, handle_sigint);
+        // Install SIGINT handler without SA_RESTART so blocking system calls
+        // like accept() are interrupted and return with errno == EINTR.
+        struct sigaction sa;
+        sa.sa_handler = handle_sigint;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0; // do NOT set SA_RESTART
+        if (sigaction(SIGINT, &sa, nullptr) != 0) {
+            cerr << "Failed to install SIGINT handler\n";
+        }
     int server_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (server_sock < 0) {
         cerr << "Error creating server socket.\n";

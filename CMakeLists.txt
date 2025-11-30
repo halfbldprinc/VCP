@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SRC_FILES
     VCP.cpp
     FTP.cpp
+  objects.cpp
 )
 
 set(SERVER_SRC
